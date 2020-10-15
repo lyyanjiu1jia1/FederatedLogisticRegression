@@ -440,6 +440,7 @@ class CentralizedLogisticRegression(LogisticRegression):
         :return: y_pred
         """
         y_pred = X.dot(self.weight)
+        y_pred = 1 / (1 + np.exp(-y_pred))
         return y_pred
 
     def validate(self, X, y):
