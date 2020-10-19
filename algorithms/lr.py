@@ -26,7 +26,7 @@ class LogisticRegression(object):
         self.eta = eta
         self.alpha = alpha
         self.max_iter = max_iter
-        self.neg_pos_ratio = None
+        self.balance_weight = None
 
         if '-' in train_method:
             train_method = train_method.split('-')
@@ -74,7 +74,7 @@ class LogisticRegression(object):
             if np.isinf(local_loss) or np.isnan(local_loss):
                 continue
             elif yi == 1:
-                local_loss *= self.neg_pos_ratio
+                local_loss *= self.balance_weight[0]
 
             loss += local_loss
         loss = loss / self.sample_num + self.alpha / 2 * np.square(np.linalg.norm(self.weight))
@@ -515,10 +515,13 @@ class CentralizedLogisticRegression(LogisticRegression):
         grad = np.zeros((self.dim, 1))
         for i in range(self.sample_num):
             xi, yi = X[[i], :].transpose(), y[i, 0]
-            sigmoid_val = self._sigmoid(yi * self.weight.transpose().dot(xi))
-            local_grad = (1 - sigmoid_val) * yi * xi
+            # sigmoid_val = self._sigmoid(yi * self.weight.transpose().dot(xi))
+            # local_grad = (1 - sigmoid_val) * yi * xi
+            local_grad = yi / (1 + np.exp(yi * np.float(self.weight.transpose().dot(xi)))) * xi
             if yi == 1:
-                local_grad = local_grad * self.neg_pos_ratio
+                local_grad = local_grad * self.balance_weight[0]
+            else:
+                local_grad = local_grad * self.balance_weight[1]
             grad = grad + local_grad
         grad = grad / self.sample_num - self.alpha * self.weight
         return grad
@@ -528,7 +531,9 @@ class CentralizedLogisticRegression(LogisticRegression):
         sigmoid_val = self._sigmoid(yi * self.weight.transpose().dot(xi))
         grad = (1 - sigmoid_val) * yi * xi - self.alpha * self.weight
         if yi == 1:
-            grad = grad * self.neg_pos_ratio
+            grad = grad * self.balance_weight[0]
+        else:
+            grad = grad * self.balance_weight[1]
         return grad
 
     def _lbfgs(self, X, y):
@@ -550,7 +555,8 @@ class CentralizedLogisticRegression(LogisticRegression):
 
         denominator = self._conjugate_denominator(X, u)
         numerator = grad.transpose().dot(u)[0, 0]
-        weight_diff = numerator / denominator * u
+        u_coef = numerator / denominator
+        weight_diff = u_coef * u
         self.weight = self.weight - weight_diff
 
     def _conjugate_denominator(self, X, u):
@@ -566,11 +572,13 @@ class CentralizedLogisticRegression(LogisticRegression):
         return -(alpha_u_square + aii_u_x)
 
     def _init_params(self, X, y):
-        self.weight = np.zeros((X.shape[1], 1))
+        self.weight = np.random.rand(X.shape[1], 1)
         self.sample_num = X.shape[0]
         self.dim = X.shape[1]
-        self.pos_num = len(np.where(y == 1))
-        self.neg_pos_ratio = (self.sample_num - self.pos_num) / self.pos_num
+        self.pos_num = np.count_nonzero(y == 1)
+        # self.balance_weight = (0.5 / (self.pos_num / self.sample_num),
+        #                        0.5 / ((self.sample_num - self.pos_num) / self.sample_num))
+        self.balance_weight = (1, 1)
 
         if self.train_method == 'lbfgs':
             self.prev_grad = None
