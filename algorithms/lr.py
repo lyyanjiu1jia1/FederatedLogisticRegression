@@ -576,9 +576,12 @@ class CentralizedLogisticRegression(LogisticRegression):
         self.sample_num = X.shape[0]
         self.dim = X.shape[1]
         self.pos_num = np.count_nonzero(y == 1)
-        # self.balance_weight = (0.5 / (self.pos_num / self.sample_num),
-        #                        0.5 / ((self.sample_num - self.pos_num) / self.sample_num))
-        self.balance_weight = (1, 1)
+
+        if self.balance_mode:
+            self.balance_weight = (0.5 / (self.pos_num / self.sample_num),
+                                   0.5 / ((self.sample_num - self.pos_num) / self.sample_num))
+        else:
+            self.balance_weight = (1, 1)
 
         if self.train_method == 'lbfgs':
             self.prev_grad = None

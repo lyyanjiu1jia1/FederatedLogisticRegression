@@ -1,15 +1,15 @@
 from algorithms.lr import CentralizedLogisticRegression
 import numpy as np
 # params
-alpha = 0.1
-eta = 1e-2
-max_iter = 3000
+alpha = 1
+eta = 0.15
+max_iter = 1000
 balance_mode = True
 train_method_list = ('gd', 'sgd', 'cd', 'cgd', 'lbfgs', 'trust_region', 'liblinear-liblinear', 'liblinear-dual')
-train_method = train_method_list[3]
+train_method = train_method_list[0]
 
 # data preprocessing
-file_name = 'total_data'
+file_name = 'breast'        # total_breast, 3_data
 X = np.load(r'../data/' + file_name + '-x.npy', allow_pickle=True)
 y = np.load(r'../data/' + file_name + '-y.npy', allow_pickle=True)
 print("data loaded {}-rows-by-{}-columns".format(X.shape[0], X.shape[1]))
