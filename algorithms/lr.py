@@ -5,7 +5,7 @@ from sklearn import metrics, linear_model
 
 
 class LogisticRegression(object):
-    def __init__(self, alpha, eta, max_iter, train_method, balance_mode):
+    def __init__(self, alpha, eta, max_iter, train_method, balance_mode, oversampling):
         """
         
         :param alpha: float, regularizer balancer
@@ -16,7 +16,10 @@ class LogisticRegression(object):
                 ‘sgd’: stochastic gradient descent
                 'cd': coordinate descent
                 'cgd': conjugate gradient descent
-                'lbfgs': limite-memory BFGS
+                'lbfgs': limited-memory BFGS
+                'momentum_lbfgs': sandbox version
+                'smart_momentum_lbfgs': sandbox version
+                'smart_adam_lbfgs': sandbox version
                 'trust_region': trust region Newton method
                 'liblinear': liblinear
                 'dual': liblinear-dual
@@ -26,7 +29,6 @@ class LogisticRegression(object):
         self.eta = eta
         self.alpha = alpha
         self.max_iter = max_iter
-        self.balance_weight = None
 
         if '-' in train_method:
             train_method = train_method.split('-')
@@ -36,12 +38,11 @@ class LogisticRegression(object):
             self.train_method = train_method
             self.liblinear_train_method = None
 
-        # gradient descent, coordinate descent, liblinear
-        self.train_method_list = ['gd', 'sgd', 'cd', 'cgd', 'lbfgs', 'trust_region', 'liblinear']
-        # coordinate descent, dual coordinate descent
-        self.liblinear_train_method_list = ['liblinear', 'dual']
-
         self.balance_mode = balance_mode
+        self.balance_weight = None
+
+        self.oversampling = oversampling
+        self.oversampling_rate = None
 
         self.loss_trajectory = []
         self.auc_trajectory = []
@@ -146,8 +147,9 @@ class LogisticRegression(object):
 
 
 class CentralizedLogisticRegression(LogisticRegression):
-    def __init__(self, alpha, eta, max_iter, train_method, balance_mode):
-        super(CentralizedLogisticRegression, self).__init__(alpha, eta, max_iter, train_method, balance_mode)
+    def __init__(self, alpha, eta, max_iter, train_method, balance_mode, oversampling):
+        super(CentralizedLogisticRegression, self).__init__(alpha, eta, max_iter, train_method,
+                                                            balance_mode, oversampling)
 
     def train(self, X, y):
         """
@@ -177,6 +179,12 @@ class CentralizedLogisticRegression(LogisticRegression):
                 self._conjugate_gradient_descent(X, y)
             elif self.train_method == 'lbfgs':
                 self._lbfgs(X, y)
+            elif self.train_method == 'momentum_lbfgs':
+                self._momentum_lbfgs(X, y)
+            elif self.train_method == 'smart_momentum_lbfgs':
+                self._smart_momentum_lbfgs(X, y)
+            elif self.train_method == 'smart_adam_lbfgs':
+                self._smart_adam_lbfgs(X, y)
             elif self.train_method == 'trust_region':
                 self._trust_region(X, y)
                 if not self.search:
@@ -208,7 +216,7 @@ class CentralizedLogisticRegression(LogisticRegression):
         else:
             grad_diff = grad - self.prev_grad
             beta = grad.transpose().dot(grad_diff) / self.prev_u.transpose().dot(grad_diff)
-            u = grad + beta * self.prev_u
+            u = grad - beta * self.prev_u
 
         self.prev_grad = copy.deepcopy(grad)
         self.prev_u = copy.deepcopy(u)
@@ -219,7 +227,11 @@ class CentralizedLogisticRegression(LogisticRegression):
         self.weight = self.weight - weight_diff
 
     def _preprocessing(self, X, y):
-        pass
+        if self.oversampling_rate:
+            for i in range(X.shape[0]):
+                if y[i, 0] == 1:
+                    X[i] *= self.oversampling_rate
+        return X, y
         # # balance positive samples
         # if self.balance_mode:
         #     for i in range(y.shape[0]):
@@ -556,7 +568,117 @@ class CentralizedLogisticRegression(LogisticRegression):
         denominator = self._conjugate_denominator(X, u)
         numerator = grad.transpose().dot(u)[0, 0]
         u_coef = numerator / denominator
+
         weight_diff = u_coef * u
+        self.weight = self.weight - weight_diff
+
+    def _momentum_lbfgs(self, X, y):
+        grad = self._compute_gradient(X, y)
+
+        if self.prev_grad is None and self.prev_weight is None:
+            u = -grad
+        else:
+            delta_grad = grad - self.prev_grad
+            delta_weight = self.weight - self.prev_weight
+            wg = delta_grad.transpose().dot(delta_weight)[0, 0]
+            b = 1 + np.square(np.linalg.norm(delta_grad)) / wg
+            ag = delta_weight.transpose().dot(grad)[0, 0] / wg
+            aw = delta_grad.transpose().dot(grad)[0, 0] / wg - b * ag
+            u = -grad + aw * delta_weight + ag * delta_grad
+
+        self.prev_grad = copy.deepcopy(grad)
+        self.prev_weight = copy.deepcopy(self.weight)
+
+        denominator = self._conjugate_denominator(X, u)
+        numerator = grad.transpose().dot(u)[0, 0]
+        u_coef = numerator / denominator
+        weight_diff = u_coef * u
+
+        if self.prev_weight_diff is not None:
+            weight_diff += self.gamma * self.prev_weight_diff
+        self.prev_weight_diff = copy.deepcopy(weight_diff)
+
+        self.weight = self.weight - weight_diff
+
+    def _smart_momentum_lbfgs(self, X, y):
+        grad = self._compute_gradient(X, y)
+
+        if self.prev_grad is None and self.prev_weight is None:
+            u = -grad
+        else:
+            delta_grad = grad - self.prev_grad
+            delta_weight = self.weight - self.prev_weight
+            wg = delta_grad.transpose().dot(delta_weight)[0, 0]
+            b = 1 + np.square(np.linalg.norm(delta_grad)) / wg
+            ag = delta_weight.transpose().dot(grad)[0, 0] / wg
+            aw = delta_grad.transpose().dot(grad)[0, 0] / wg - b * ag
+            u = -grad + aw * delta_weight + ag * delta_grad
+
+        self.prev_grad = copy.deepcopy(grad)
+        self.prev_weight = copy.deepcopy(self.weight)
+
+        denominator = self._conjugate_denominator(X, u)
+        numerator = grad.transpose().dot(u)[0, 0]
+        u_coef = numerator / denominator
+        weight_diff = u_coef * u
+
+        loss_reduction = self._check_loss_reduction()
+
+        # if previous loss reduce, add up its momentum
+        if self.prev_weight_diff is not None:
+            weight_diff += self.gamma * self.prev_weight_diff
+
+        # if current loss reduce, store the momentum
+        if loss_reduction:
+            self.prev_weight_diff = copy.deepcopy(weight_diff)
+        else:
+            self.prev_weight_diff = None
+
+        self.weight = self.weight - weight_diff
+
+    def _smart_adam_lbfgs(self, X, y):
+        grad = self._compute_gradient(X, y)
+
+        if self.prev_grad is None and self.prev_weight is None:
+            u = -grad
+        else:
+            delta_grad = grad - self.prev_grad
+            delta_weight = self.weight - self.prev_weight
+            wg = delta_grad.transpose().dot(delta_weight)[0, 0]
+            b = 1 + np.square(np.linalg.norm(delta_grad)) / wg
+            ag = delta_weight.transpose().dot(grad)[0, 0] / wg
+            aw = delta_grad.transpose().dot(grad)[0, 0] / wg - b * ag
+            u = -grad + aw * delta_weight + ag * delta_grad
+
+        self.prev_grad = copy.deepcopy(grad)
+        self.prev_weight = copy.deepcopy(self.weight)
+
+        denominator = self._conjugate_denominator(X, u)
+        numerator = grad.transpose().dot(u)[0, 0]
+        u_coef = numerator / denominator
+
+        # if previous loss reduce, add up its momentum
+        if self.prev_g is not None:
+            self.opt_beta1_decay = self.opt_beta1_decay * self.opt_beta1
+            self.opt_beta2_decay = self.opt_beta2_decay * self.opt_beta2
+            self.opt_m = self.opt_beta1 * self.opt_m + (1 - self.opt_beta1) * grad
+            self.opt_v = self.opt_beta2 * self.opt_v + (1 - self.opt_beta2) * np.square(grad)
+            opt_m_hat = self.opt_m / (1 - self.opt_beta1_decay)
+            opt_v_hat = self.opt_v / (1 - self.opt_beta2_decay)
+            # opt_v_hat = np.array(opt_v_hat, dtype=np.float64)
+            weight_diff = u_coef * opt_m_hat / (np.sqrt(opt_v_hat) + 1e-8) * u
+        else:
+            weight_diff = u_coef * u
+
+        # check loss reduction
+        loss_reduction = self._check_loss_reduction()
+
+        # if current loss reduce, store the momentum
+        if loss_reduction:
+            self.prev_g = copy.deepcopy(grad)
+        else:
+            self.prev_g = None
+
         self.weight = self.weight - weight_diff
 
     def _conjugate_denominator(self, X, u):
@@ -572,7 +694,8 @@ class CentralizedLogisticRegression(LogisticRegression):
         return -(alpha_u_square + aii_u_x)
 
     def _init_params(self, X, y):
-        self.weight = np.random.rand(X.shape[1], 1)
+        # self.weight = np.random.rand(X.shape[1], 1)
+        self.weight = np.zeros((X.shape[1], 1))
         self.sample_num = X.shape[0]
         self.dim = X.shape[1]
         self.pos_num = np.count_nonzero(y == 1)
@@ -583,9 +706,29 @@ class CentralizedLogisticRegression(LogisticRegression):
         else:
             self.balance_weight = (1, 1)
 
+        if self.oversampling:
+            self.oversampling_rate = (self.sample_num - self.pos_num) / self.pos_num        # neg / pos
+        else:
+            self.oversampling_rate = 1
+
         if self.train_method == 'lbfgs':
             self.prev_grad = None
             self.prev_weight = None
+        elif self.train_method == 'momentum_lbfgs' or self.train_method == 'smart_momentum_lbfgs':
+            self.prev_grad = None
+            self.prev_weight = None
+            self.prev_weight_diff = None
+            self.gamma = 0.9
+        elif self.train_method == 'smart_adam_lbfgs':
+            self.prev_grad = None
+            self.prev_weight = None
+            self.prev_g = None      # for adam
+            self.opt_beta1 = 0.9
+            self.opt_beta2 = 0.999
+            self.opt_beta1_decay = 1.0
+            self.opt_beta2_decay = 1.0
+            self.opt_m = np.zeros((self.dim, 1))
+            self.opt_v = np.zeros((self.dim, 1))
         elif self.train_method == 'cgd':
             self.prev_grad = None
             self.prev_u = None
@@ -638,3 +781,11 @@ class CentralizedLogisticRegression(LogisticRegression):
         for i in range(diag_matrix.shape[0]):
             new_matrix[i, i] = 1 / diag_matrix[i, i]
         return new_matrix
+
+    def _check_loss_reduction(self):
+        if len(self.loss_trajectory) < 3:
+            return False
+        if self.loss_trajectory[-1] - self.loss_trajectory[-2] < 0:
+            return True
+        else:
+            return False
