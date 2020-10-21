@@ -14,7 +14,7 @@ train_method_list = ('gd', 'sgd', 'cd',
 train_method = train_method_list[3]
 
 # data preprocessing
-file_name = 'total_data'        # total_breast, 3_data
+file_name = 'total_data'        # breast, 3_data
 X = np.load(r'../data/' + file_name + '-x.npy', allow_pickle=True)
 y = np.load(r'../data/' + file_name + '-y.npy', allow_pickle=True)
 print("data loaded {}-rows-by-{}-columns".format(X.shape[0], X.shape[1]))
