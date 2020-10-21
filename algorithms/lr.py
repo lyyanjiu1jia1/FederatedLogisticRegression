@@ -13,9 +13,11 @@ class LogisticRegression(object):
         :param max_iter: int
         :param train_method: str
                 'gd': gradient descent
+                'l_gd': line search gradient descent
                 ‘sgd’: stochastic gradient descent
                 'cd': coordinate descent
                 'cgd': conjugate gradient descent
+                'single_lbfgs': single-memory BFGS
                 'lbfgs': limited-memory BFGS
                 'momentum_lbfgs': sandbox version
                 'smart_momentum_lbfgs': sandbox version
@@ -171,12 +173,16 @@ class CentralizedLogisticRegression(LogisticRegression):
             print(">>> iter = {}".format(iter))
             if self.train_method == 'gd':
                 self._gradient_descent(X, y)
+            elif self.train_method == 'l_gd':
+                self._line_search_gradient_descent(X, y)
             elif self.train_method == 'sgd':
                 self._stochastic_gradient_descent(X, y)
             elif self.train_method == 'cd':
                 self._coordinate_descent(X, y, iter % self.dim)
             elif self.train_method == 'cgd':
                 self._conjugate_gradient_descent(X, y)
+            elif self.train_method == 'single_lbfgs':
+                self._single_lbfgs(X, y)
             elif self.train_method == 'lbfgs':
                 self._lbfgs(X, y)
             elif self.train_method == 'momentum_lbfgs':
@@ -487,6 +493,16 @@ class CentralizedLogisticRegression(LogisticRegression):
         grad = self._compute_gradient(X, y)
         self.weight = self.weight + self.eta * grad
 
+    def _line_search_gradient_descent(self, X, y):
+        grad = self._compute_gradient(X, y)
+
+        # line search
+        denominator = self._conjugate_denominator(X, grad)
+        numerator = grad.transpose().dot(grad)[0, 0]
+        eta = numerator / denominator
+
+        self.weight = self.weight - eta * grad
+
     def _coordinate_descent(self, X, y, target_sample):
         """
 
@@ -549,6 +565,59 @@ class CentralizedLogisticRegression(LogisticRegression):
         return grad
 
     def _lbfgs(self, X, y):
+        # compute gradient
+        grad = self._compute_gradient(X, y)        # add - to make it a loss gradient
+
+        # direction search
+        alpha_array = []
+        q = copy.deepcopy(grad)
+
+        # update dg, dw
+        if type(self.g_array[0]) == np.ndarray and type(self.g_array[1]) == np.ndarray:
+            self.pop_push(self.dg_array, self.g_array[1] - self.g_array[0])
+            self.pop_push(self.dw_array, self.w_array[1] - self.w_array[0])
+
+        # update rho, gamma
+        if self.dg_array[-1] is not None:
+            self.pop_push(self.rho_array, 1 / np.float(self.dg_array[-1].transpose().dot(self.dw_array[-1])))
+            gamma = np.float((self.dg_array[-1].transpose().dot(self.dw_array[-1])) /
+                             np.square(np.linalg.norm(self.dg_array[-1])))
+
+        # recurse on q
+        for rho, dw, dg in zip(reversed(self.rho_array), reversed(self.dw_array), reversed(self.dg_array)):
+            if rho is None:
+                continue
+            alpha = rho * np.float(dw.transpose().dot(q))
+            q = q - alpha * dg
+            alpha_array.append(alpha)
+
+        # recurse on u
+        if self.dg_array[-1] is None:
+            u = q
+        else:
+            u = gamma * q
+            for rho, dw, dg, alpha in zip(self.rho_array, self.dw_array, self.dg_array, reversed(alpha_array)):
+                if rho is None:
+                    continue
+                beta = rho * np.float(dg.transpose().dot(u))
+                u = u + dw * (alpha - beta)
+
+        # reverse u
+        u = -u
+
+        # update g, w array of length two
+        self.pop_push(self.g_array, grad)
+        self.pop_push(self.w_array, self.weight)
+
+        # line search
+        denominator = self._conjugate_denominator(X, u)
+        numerator = grad.transpose().dot(u)[0, 0]
+        u_coef = numerator / denominator
+
+        weight_diff = u_coef * u
+        self.weight = self.weight - weight_diff
+
+    def _single_lbfgs(self, X, y):
         grad = self._compute_gradient(X, y)
 
         if self.prev_grad is None and self.prev_weight is None:
@@ -711,9 +780,16 @@ class CentralizedLogisticRegression(LogisticRegression):
         else:
             self.oversampling_rate = 1
 
-        if self.train_method == 'lbfgs':
+        if self.train_method == 'single_lbfgs':
             self.prev_grad = None
             self.prev_weight = None
+        elif self.train_method == 'lbfgs':
+            self.memory_length = 10
+            self.w_array = [None, None]
+            self.g_array = [None, None]
+            self.dw_array = [None for _ in range(self.memory_length)]
+            self.dg_array = [None for _ in range(self.memory_length)]
+            self.rho_array = [None for _ in range(self.memory_length)]
         elif self.train_method == 'momentum_lbfgs' or self.train_method == 'smart_momentum_lbfgs':
             self.prev_grad = None
             self.prev_weight = None
@@ -789,3 +865,8 @@ class CentralizedLogisticRegression(LogisticRegression):
             return True
         else:
             return False
+
+    @staticmethod
+    def pop_push(queue, element):
+        queue.pop(0)
+        queue.append(element)
