@@ -621,15 +621,20 @@ class CentralizedLogisticRegression(LogisticRegression):
         grad = self._compute_gradient(X, y)
 
         if self.prev_grad is None and self.prev_weight is None:
-            u = -grad
+            u = grad
         else:
-            delta_grad = grad - self.prev_grad
-            delta_weight = self.weight - self.prev_weight
-            wg = delta_grad.transpose().dot(delta_weight)[0, 0]
-            b = 1 + np.square(np.linalg.norm(delta_grad)) / wg
-            ag = delta_weight.transpose().dot(grad)[0, 0] / wg
-            aw = delta_grad.transpose().dot(grad)[0, 0] / wg - b * ag
-            u = -grad + aw * delta_weight + ag * delta_grad
+            dg = grad - self.prev_grad
+            dw = self.weight - self.prev_weight
+            dgdg = np.float(dg.transpose().dot(dg))
+            dgg = np.float(dg.transpose().dot(grad))
+            dwdg = np.float(dw.transpose().dot(dg))
+            dwg = np.float(dw.transpose().dot(grad))
+
+            alpha, beta, gamma = self.compute_direction_search_coef(dgdg, dgg, dwdg, dwg)
+
+            u = gamma * grad - alpha * gamma * dg + (alpha - beta) * dw
+
+        u = -u
 
         self.prev_grad = copy.deepcopy(grad)
         self.prev_weight = copy.deepcopy(self.weight)
@@ -870,3 +875,11 @@ class CentralizedLogisticRegression(LogisticRegression):
     def pop_push(queue, element):
         queue.pop(0)
         queue.append(element)
+
+    @staticmethod
+    def compute_direction_search_coef(dgdg, dgg, dwdg, dwg):
+        rho = 1 / dwdg
+        alpha = rho * dwg
+        gamma = dwdg / dgdg
+        beta = rho * gamma * (dgg - alpha * dgdg)
+        return alpha, beta, gamma

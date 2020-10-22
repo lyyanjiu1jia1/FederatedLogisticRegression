@@ -4,7 +4,7 @@ import numpy as np
 # params
 alpha = 1
 eta = 0.15
-max_iter = 10000
+max_iter = 100
 balance_mode = True
 oversampling = False
 train_method_list = ('gd', 'l_gd', 'sgd', 'cd',
@@ -12,10 +12,10 @@ train_method_list = ('gd', 'l_gd', 'sgd', 'cd',
                      'smart_momentum_lbfgs', 'smart_adam_lbfgs',
                      'trust_region',
                      'liblinear-liblinear', 'liblinear-dual')
-train_method = train_method_list[6]
+train_method = train_method_list[5]
 
 # data preprocessing
-file_name = 'total_data'        # breast, 3_data, total_data
+file_name = 'breast'        # breast, 3_data, total_data
 X = np.load(r'../data/' + file_name + '-x.npy', allow_pickle=True)
 y = np.load(r'../data/' + file_name + '-y.npy', allow_pickle=True)
 print("data loaded {}-rows-by-{}-columns".format(X.shape[0], X.shape[1]))
